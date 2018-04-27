@@ -324,6 +324,7 @@ public abstract class RestService implements Serializable {
         String types = new Resource(settings, true).type();
 
         List<PartitionDefinition> partitions = new ArrayList<PartitionDefinition>(shards.size());
+        int numPartitions = 0;
         for (List<Map<String, Object>> group : shards) {
             String index = null;
             int shardId = -1;
@@ -354,11 +355,20 @@ public abstract class RestService implements Serializable {
                     indexAndType.append(types);
                 }
                 // TODO applyAliasMetaData should be called in order to ensure that the count are exact (alias filters and routing may change the number of documents)
-                long numDocs = client.count(indexAndType.toString(), Integer.toString(shardId), query);
-                int numPartitions = (int) Math.max(1, numDocs / maxDocsPerPartition);
-                for (int i = 0; i < numPartitions; i++) {
-                    PartitionDefinition.Slice slice = new PartitionDefinition.Slice(i, numPartitions);
-                    partitions.add(new PartitionDefinition(settings, mapping, index, shardId, slice, locations));
+                if (numPartitions == 0) {
+                    long numAllDocs = client.count(indexAndType.toString(), query);
+                    numPartitions = (int) (numAllDocs - 1) / maxDocsPerPartition + 1;
+                }
+                if (numPartitions >= shards.size()) {
+                    for(int i = shardId; i < numPartitions; i += shards.size()) {
+                        PartitionDefinition.Slice slice = new PartitionDefinition.Slice(i, numPartitions);
+                        partitions.add(new PartitionDefinition(settings, mapping, index, shardId, slice, locations));
+                    }
+                } else {
+                    for(int i = shardId % numPartitions; i < shards.size(); i += numPartitions) {
+                        PartitionDefinition.Slice slice = new PartitionDefinition.Slice(i, numPartitions);
+                        partitions.add(new PartitionDefinition(settings, mapping, index, shardId, slice, locations));
+                    }
                 }
             }
         }
